@@ -18,7 +18,10 @@ import hashlib
 import pprint
 import google.generativeai as palm
 from sklearn.linear_model import LogisticRegression
-from transformers import DistilBertTokenizer, DistilBertForSequenceClassification, DistilBertModel
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from sklearn.preprocessing import LabelEncoder
@@ -44,29 +47,15 @@ st.markdown(
 )
 
 
-# Function to load your model and tokenizer
+# Load logistic regression model and label encoder
 def load_models():
-    # Paths for DistilBert model and tokenizer
-    dbert_model_path = './Model/distilbert_model'
-    dbert_tokenizer_path = './Model/distilbert_tokenizer'
-    
-    # Load DistilBert model and tokenizer
-    dbert_tokenizer = DistilBertTokenizer.from_pretrained(dbert_tokenizer_path)
-    dbert_model = DistilBertForSequenceClassification.from_pretrained(dbert_model_path, num_labels=2)
-
-    # Path for logistic regression model
     logistic_model_path = './Model/logistic_regression_model/logistic_regression_model.pkl'
-    
-    # Load logistic regression model
-    logistic_model = joblib.load(logistic_model_path)
-
-    # Load label encoder
     label_encoder_path = './Model/label_encoder/label_encoder.pkl'
+    logistic_model = joblib.load(logistic_model_path)
     label_encoder = joblib.load(label_encoder_path)
+    return logistic_model, label_encoder
 
-    return dbert_model, dbert_tokenizer, logistic_model, label_encoder
-
-dbert_model, dbert_tokenizer, logistic_model, label_encoder = load_models()
+logistic_model, label_encoder = load_models()
 
 # Load Model Log
 model_log = pickle.load(open('./Model/modellog.pkl', 'rb'))
@@ -121,13 +110,7 @@ def link_to_soup(link):
     else:
         return False
 home_page_soup = link_to_soup('https://thehackernews.com/')
-#print(home_page_soup)
-# Load the model (adjust as necessary)
-#model, tokenizer = load_model()
-# Load the models and tokenizer
-dbert_model, dbert_tokenizer, logistic_model, label_encoder = load_models()
 #Menu
-#menu = st.sidebar.selectbox("Pilih Menu :",("Anonymizer","Cybersec Monitoring","Log Threat Monitoring","Monitoring Berita","Chatbot PDP"))
 menu = option_menu(None, ["Home","Anonymizer", "Phising Monitoring", "Log Based Monitoring", "News Monitoring", "Chatbot"], 
     icons=['house', 'incognito', "virus", 'router','newspaper','chat-text'], 
     menu_icon="cast", default_index=0, orientation="horizontal",
@@ -151,56 +134,19 @@ if menu == "Anonymizer":
 
         if st.button('Anonymize Data'):
             melted_table = pd.melt(df, value_vars=df.columns, var_name='Column', value_name='Data')
-
-            # Tokenize and encode the text data for DistilBert
-            encodings = dbert_tokenizer(list(melted_table['Data'].astype(str)), truncation=True, padding=True, max_length=64)
-            dataset = TensorDataset(torch.tensor(encodings['input_ids']), torch.tensor(encodings['attention_mask']))
-            loader = DataLoader(dataset, batch_size=8, shuffle=False)
-
-            # Predict with DistilBert
-            dbert_model.eval()
-            all_preds_db = []
-            with torch.no_grad():
-                for batch in loader:
-                    input_ids, attention_mask = batch
-                    outputs = dbert_model(input_ids, attention_mask=attention_mask)
-                    preds = torch.argmax(outputs.logits, dim=1).cpu().numpy()
-                    all_preds_db.extend(preds)
-                    
-            # Add DistilBert predicted labels to the DataFrame
-            melted_table['Sensitive_DB'] = label_encoder.inverse_transform(all_preds_db)
-        
-            # Re-melt the table for logistic regression to ensure consistency
-            melted_table_lr = pd.melt(df, value_vars=df.columns, var_name='Column', value_name='Data')
-        
-            # Predict with logistic regression
-            logistic_preds = logistic_model.predict(melted_table_lr['Data'].astype(str).tolist())
-    
-            # Add logistic regression predicted labels to the DataFrame
-            melted_table_lr['Sensitive_LR'] = label_encoder.inverse_transform(logistic_preds)
-        
-            # Combine predictions from both models (assuming '1' is sensitive)
-            melted_table['Sensitive'] = np.where((melted_table['Sensitive_DB'] == 1) | (melted_table_lr['Sensitive_LR'] == 1), 1, 0)
-        
-            # Apply SHA-256 hashing for names identified as sensitive
+            logistic_preds = logistic_model.predict(melted_table['Data'].astype(str).tolist())
+            melted_table['Sensitive'] = label_encoder.inverse_transform(logistic_preds)
             melted_table.loc[melted_table['Sensitive'] == 1, 'Data'] = \
                 melted_table.loc[melted_table['Sensitive'] == 1, 'Data'].apply(
                     lambda x: hashlib.sha256(str(x).encode()).hexdigest())
-        
-            # Apply custom MD5 hashing function
-            anonymized_df = melted_table.applymap(hash_condition)
-        
-            # Reconstruct the DataFrame to its original format
-            split_tables = np.array_split(anonymized_df, len(anonymized_df) // len(df))
+            
+            split_tables = np.array_split(melted_table, len(melted_table) // len(df))
             pivoted_tables = [split.pivot(columns='Column', values='Data').reset_index(drop=True) for split in split_tables]
             reverted_table = pivoted_tables[0]
             for table in pivoted_tables[1:]:
                 reverted_table = pd.merge(reverted_table, table, left_index=True, right_index=True)
         
-            # Display the anonymized DataFrame
             st.dataframe(reverted_table)
-        
-            # Determine the file format for download based on the uploaded file
             file_format = uploaded_file.name.split('.')[-1].lower()
             if file_format == 'csv':
                 csv = reverted_table.to_csv(index=False)
@@ -213,7 +159,7 @@ if menu == "Anonymizer":
             else:
                 st.error("Unsupported file format. Please provide a CSV or Excel file.")
             
-elif menu == 'Phising Monitoring':
+if menu == 'Phising Monitoring':
     st.title('Phising Monitoring')
     #Data Phising (https://phishstats.info/#apidoc)
     url = "https://phishstats.info:2096/api/phishing?_sort=-date&_where=(countrycode,eq,ID)&&_size=100"
@@ -406,7 +352,7 @@ elif menu == 'Phising Monitoring':
         plt.imshow(wordcloud, interpolation='bilinear')
         plt.axis("off")
         st.pyplot(wc)
-elif menu == 'Log Based Monitoring':
+if menu == 'Log Based Monitoring':
     st.title('Log Based Monitoring')
     st.write(data_log.head())
     st.write("Menu Prediksi")
@@ -522,7 +468,7 @@ elif menu == 'Log Based Monitoring':
             st.warning('Koneksi masuk kategori Berbahaya')
         else:
             st.success('Koneksi aman')
-elif menu == 'News Monitoring':
+if menu == 'News Monitoring':
     st.title('News Monitoring')
     newssource = st.sidebar.radio("Pilih Sumber Berita",("Google News","Hacker News"))
     if newssource == 'Google News':
@@ -572,8 +518,8 @@ elif menu == 'News Monitoring':
                 entry['date'] = str(entry['date'])
             datanews = pd.DataFrame(posts_url_title_data)
             st.dataframe(datanews)
-else :
-    st.title('Chatbot PDP')
+if menu == 'Chatbot':
+    st.title('Chatbot')
     #Initiate API (dihapus setelah lomba)
     palm.configure(api_key='AIzaSyDiU_A4GCyjCW4vuy7bOTtSum72QsV5U-U')
     prompt = st.text_input('Apa yang ingin kamu tanyakan? (in English) 🤖')

@@ -14,3 +14,4 @@ google-generativeai
 beautifulsoup4
 pyvis
 plotly
+streamlit_option_menu
