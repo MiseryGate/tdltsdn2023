@@ -521,7 +521,7 @@ if menu == 'News Monitoring':
 if menu == 'Chatbot':
     st.title('Chatbot')
     #Initiate API (dihapus setelah lomba)
-    palm.configure(api_key='AIzaSyDiU_A4GCyjCW4vuy7bOTtSum72QsV5U-U')
+    palm.configure(api_key='use API from PALM')
     prompt = st.text_input('Apa yang ingin kamu tanyakan? (in English) 🤖')
     model = 'models/text-bison-001'
     if st.button("Ask"):
